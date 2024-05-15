@@ -1,0 +1,317 @@
+---
+title: Terraform Integration guide for Prisma Cloud by Palo Alto Networks
+description: Terraform - Integration Guide for Prisma Cloud by Palo Alto Networks. Version 1.0.0, April 2024
+---
+# Terraform: Integration guide for Prisma Cloud by Palo Alto Networks
+
+| HashiCorp Products | HCP Terraform, Terraform Enterprise |
+| --- | --- |
+| Partner Products | Palo Alto Networks - Prisma Cloud - Code Scanning |
+| Maturity Model | Standardizing |  
+| Use Case Coverage | Run Task for Governance |
+| Tags | Run Task, Policy as Code, IaC Governance |
+| Guide Type | HVD Integration Guide |
+| Publish Date, Version | April/25/2024, Version 1.0.0 |
+| Authors | Jason Roberts, Tom Prenderville, Prakash Manglanathan |
+
+## Introduction
+
+<Note>
+In this document we will default to HCP Terraform. HCP Terraform (SAAS) is similar to Terraform Enterprise (Self Hosted) in terms of functionality unless otherwise mentioned.
+
+Within Prisma Cloud, HCP Terraform is referred to as HCP Terraform (Run Tasks).
+</Note>
+
+The Prisma Cloud Run Task integration with HCP Terraform embeds Prisma Cloud's extensive library of pre-configured security policies into every workspace run. Prisma Cloud scans and enforces during the terraform plan stage, reporting results back to both HCP Terraform and Prisma Cloud. 
+
+Run tasks are driven by event hooks, which allow Prisma Cloud to receive information about each workspace run, and act upon this information by enforcing policies at build-time. Prisma Cloud can be configured to perform a scan at either the pre-plan or post-plan stage for a given workspace.
+
+#### Target Audience
+- Platform Team responsible for HCP Terraform
+- Platform Team responsible for VCS
+- Security Team responsible for Prisma Cloud
+
+#### Benefits
+- Application Team developers are able to quickly provision cloud resources while at the same complying with security needs of the organization.
+- Both the platform and security teams have good visibility into what is being provisioned and be able to apply organizational policies to meet security and compliance needs.
+
+
+### Prerequisites and limitations
+Before starting on this guide, we recommend that you have reviewed the following: 
+
+- HashiCorp & Palo Alto Network's joint [Cloud Operating Model](https://www.hashicorp.com/resources/the-cloud-operating-model-with-palo-alto-networks-and-hashicorp)
+- [Terraform Enterprise Solution Design Guide](https://developer.hashicorp.com/validated-designs/terraform-solution-design-guides-terraform-enterprise-fdo) (for Self Hosted Customers)
+- [Terraform Operating Guide - Adopting](https://developer.hashicorp.com/validated-designs/terraform-operating-guides-adoption)
+
+#### Access requirements
+- Admin access to HCP Terraform
+    -  Create API Token [docs](https://app.terraform.io/app/settings/tokens)
+- Admin access to VCS repository
+- Admin access to Prisma Cloud
+
+
+### Integration Architecture
+The main components of this integration are:
+- Your VCS repository where Terraform code will be stored
+- HCP Terraform or Terraform Enterprise 
+- Prisma Cloud
+
+We do not cover details of other components such as SSO, Logging/SCIM tooling that are not core parts of this integration.
+
+#### Networking for Terraform Enterprise
+In the diagram below we show a scenario where Terraform Enterprise is hosted within a separate network from Prisma Cloud.
+
+![Integration Architecture](/img/integration-patterns/terraform-prisma-cloud/terraform-prisma-architecture.png)
+
+Terraform and Prisma Cloud need bidirectional communication. This bidirectional communication is pre-configured when using HCP Terraform (SaaS). However, in a situation where Terraform Enterprise is deployed in a private network, we need to make sure that traffic from Prisma Cloud can ingress your internal network.
+
+In the above mentioned scenario you will have to ensure the following:
+- Terraform Enterprise can reach Prisma Cloud on port 443
+- Prisma Cloud has access to Terraform Enterprise’s API endpoint on port 443. 
+    - Because Terraform Enterprise might be protected by a TLS certificate that is not issued by a public CA, the Palo Alto Networks team would need access to the certificate to trust the TLS connection. 
+
+### Prescriptive guidance
+Our objective in these “HashiCorp Validated Designs” is to give you prescriptive, best practice guidance based on our experience partnering with numerous organizations who have implemented HCP Terraform with Prisma cloud. 
+
+**Run Task vs Sentinel Integration**: HCP Terraform can integrate with Prisma Cloud using Run Task or via Sentinel. We recommend that the Run Task Integration is used unless you have specific requirements that are not met by the Run Task integration. The Run Task integration is simpler to configure and manage and is supports the latest advances including structured run outputs.
+
+#### People and Process
+The Terraform Operating Guide has extensive discussion on the people and process recommendations to onboard HCP Terraform or Terraform Enterprise. In this section we describe in brief the core teams and their roles & responsibilities as relating to managing this technology integration.
+
+The three main teams as it relates to this document are the Application team, the Platform team and the Security team as shown in the picture below. We will describe the teams in more detail and how they work together to securely build and deploy applications at scale and deliver value for your customers.
+
+![Integration People](/img/integration-patterns/terraform-prisma-cloud/terraform-prisma-people.png)
+
+The recommended approach from Hashicorp and Palo Alto Networks assumes that:
+1. Platform team owns HCP Terraform and the VCS platform 
+2. Security team owns Prisma Cloud
+3. Application team may own/contribute to VCS implementation
+
+**Application Team**: The Application team is the main consumer of this integration. This integration ensures that developers in application teams are able to quickly provision cloud resources while at the same complying with security needs of the organization.
+
+1. Developers write/edit terraform code and have access to the repo where the code is stored.
+2. Developers have read access to HCP Terraform to see the status of the terraform plan/apply. They will also be able to view the run task output to see details from the Prisma Cloud run task integration.
+3. Developers optionally will also have access to Prisma Cloud to review more details on the errors or warnings raised by Prisma Cloud. We notice that in some organizations with a large number of developers, providing access for every developer to access Prisma Cloud could be a challenge. In those scenarios one or two members of the development will have Prisma Cloud 
+
+In the context of this integration the Application team will have the following responsibilities:
+- Ensure that developers have access to the enablement made available by the platform team on how to use the integration (we will talk about recommended enablement later in this document)
+- Understand the importance of this integration and the value it provides to the organization.
+- Understand who to contact if there are any questions about this integration.
+- Ensure that developers have access to the client tools provided by Prisma cloud including:
+    - IDE Plugin 
+    - Chekov CLI
+
+<Note>
+This integration when implemented correctly should not have any adverse impact on the velocity or the workflow of the individual developer. The developer will continue to use terraform to provision as they used to with the additional benefit that they will get detailed information on configuration issues both while developing and while performing a plan/apply on Terraform.
+</Note>
+
+**Platform Team**:The platform is the umbrella group that owns VCS and HCP Terraform
+In the context of this integration the platform team will be responsible for the following:
+1. Ensure that the integration between HCP Terraform and Prisma cloud is established.
+2. Ensure that the appropriate Terraform workspaces are assigned the Prisma Cloud run task.
+3. Set expectations for the Application Teams now that the run task is enabled for their terraform runs:
+    a. Run Tasks involve additional processing which means that this may increase the wait time for application teams by a few additional minutes.
+    b. Workspace runs that worked before can potentially be blocked by the run task and would have to be remediated. 
+4. Ensure documentation is in a centralized location for the application team regarding this integration.
+5. Set up periodic collaboration meetings with the security team to ensure that the integration’s objectives are being met.
+
+**Security Team**: The Security Team owns the Prisma Cloud product and the relationship with the Palo Alto Network’s account team.
+1. In the context of this integration the security team will be responsible for the following:
+Managing Prisma Cloud
+2. Ensure the Integration with HCP Terraform is validated and socialized with other counterparts , e.g networking team.
+3. Create a project plan and assign responsibilities to team members.
+4. Contribute to documentation and enablement activities developed by the Platform team.
+
+These teams often work collaboratively to ensure that applications are developed securely, deployed on a stable platform, and are continuously monitored and improved to maintain the organization's overall security posture and functionality. Coordination and communication between these teams are essential to promote a robust and secure application lifecycle.
+
+##### Governance and Compliance Committee
+We recommend that a Governance and Compliance Committee is formed that includes representatives from the Platform, Security and Application teams. The committee is responsible for defining the policies that will be enforced by Prisma Cloud and the Run Task. The committee will also be responsible for reviewing and updating the policies on a regular basis.
+
+We recommend that the committee meets monthly to review the policies and ensure that they are up to date with the latest security and compliance requirements.
+
+#### Object Planning
+There is no object planning required for this integration. Once the Run Task is configured, Prisma Cloud will automatically scan the terraform plan and enforce policies for any workspace that is configured to use the Run Task.
+
+We recommend that global Run task enforcement scope is selected, which will ensure that the Run Task is applied to all workspaces in the organization. This will ensure that all workspaces are scanned and enforced by Prisma Cloud.
+
+#### Workflows
+In the diagram below we cover the recommended workflow, in which terraform code is stored in a VCS repository and changes to the terraform configuration are made by committing code to the repository via a pull request/merge process. While this is the recommended workflow for making changes to IaC, but Terraform does support alternate workflows including direct CLI, API and no-code as described in the Terraform Operating Guide for Adoption. In the case of CLI, API and no-code workflows items 3-6 will remain the same.
+
+![Integration Workflow](/img/integration-patterns/terraform-prisma-cloud/terraform-prisma-workflow.png)
+
+
+Workflow Details:
+1. A developer commits terraform code to a repo and creates a pull request to ‘main’ 
+2. The VCS platform triggers a webhook notification to the connected Terraform workspace
+3. At either the Pre/Post Plan stage (depending on configuration), HCP Terraform will send plan information to Prisma Cloud for analysis and policy enforcement
+4. Prisma Cloud will respond to HCP Terraform and allow/deny the run
+5. The plan is applied and resources are deployed
+6. Prisma Cloud continuously monitors resource configuration. Note: HCP Terraform has built in drift detection and continuous validation features that can be used in conjunction with Prisma Cloud for additional security and compliance checks.
+
+The terraform workflow is triggered during the pull request and/or when the merge is performed (based on how speculative plans are configured)  with the distinction that Terraform Apply occurs only during the merge (either automatically or after a human intervention). The purpose of the workflow being triggered during the pull request is to validate / check the code with a speculative plan and a policy check using Prisma cloud based on the results.
+
+<Note>
+While the direct VCS integration is recommended, you can use a CI/CD tool such as Github Actions or Jenkins to integrate VCS with HCP Terraform / Terraform Enterprise
+</Note>
+
+## Steps
+
+### Step 1: Configure Integration
+This section outlines how to onboard and configure the run task integration with Prisma Cloud. Both the Platform team and Security team share responsibility in setting up and managing the integration. For example, Platform teams will need to provide an access token to the Security team who will then perform the initial setup of the integration within Prisma Cloud. Further, the configuration items of each run task within a workspace (e.g. Advisory, Mandatory, pre/post plan) are managed by the Platform team but these settings should be governed by the Security team. 
+
+
+**Integrate HCP Terraform (Run Tasks) with Prisma Cloud**
+
+From the Prisma Cloud Console 
+- Select Settings > Repositories > Add Repository.
+- Select HCP Terraform (Run Tasks).
+
+![Step1 Wizard1](/img/integration-patterns/terraform-prisma-cloud/step1-prisma-connect-wizard10.png)
+
+**Configure HCP Terraform (Run Tasks) account on Prisma Cloud**
+
+Add User or Team Token and then select Next.
+
+![Step1 Wizard2](/img/integration-patterns/terraform-prisma-cloud/step1-prisma-connect-wizard20.png)
+
+**Select organization to create event hooks on Prisma Cloud.**
+
+Select the organization and then select Next.
+
+<Note>
+Prisma Cloud currently supports one HCP Terraform organization for a single integration instance.
+</Note>
+
+![Step1 Wizard3](/img/integration-patterns/terraform-prisma-cloud/step1-prisma-connect-wizard30.png)
+
+
+
+**Select Workspace and Run Stage to scan during HCP Terraform run lifecycle.**
+
+Select workspace(s) to scan during the HCP Terraform run lifecycle.
+You can select multiple workspaces for Prisma Cloud to scan during the HCP Terraform run lifecycle.
+
+![Step1 Wizard4](/img/integration-patterns/terraform-prisma-cloud/step1-prisma-connect-wizard40.png)
+
+Next, select the desired Run Stage for the specific workspace. We recommend selecting the Post-Plan as this will ensure that the prisma cloud scan is performed after the terraform plan is generated. This will allow Prisma Cloud to scan the plan and enforce policies before the terraform apply is performed.
+
+![Step1 Wizard5](/img/integration-patterns/terraform-prisma-cloud/step1-prisma-connect-wizard50.png)
+
+Verify the HCP Terraform (Run Tasks) integration with Prisma Cloud. A message indicating **New integration successfully configured** shows after integration is successfully set up. Select Done.
+
+![Step1 Wizard6](/img/integration-patterns/terraform-prisma-cloud/step1-prisma-connect-wizard60.png)
+
+To view the scan results for the HCP Terraform (Run Tasks) repository that you added, select **Application Security > Projects** to [Suppress](https://docs.prismacloud.io/en/enterprise-edition/content-collections/application-security/risk-management/monitor-and-manage-code-build/suppress-code-issues) or [Fix](https://docs.prismacloud.io/en/enterprise-edition/content-collections/application-security/risk-management/monitor-and-manage-code-build/fix-code-issues) the policy misconfigurations.
+
+
+#### Step 1b: Support for Multiple integrations
+Our recommendation is to consolidate all terraform workspaces under a single organization. This will allow you to configure a single integration in Prisma Cloud for all workspaces. In cases where there are multiple organizations (e.g Terraform Enterprise), you can create multiple integrations in Prisma Cloud.
+
+Add additional integrations to a configured HCP Terraform (Run Tasks).
+- Select **Settings > Repositories > Add Repository**.
+- Select HCP Terraform (Run Tasks) and then select Add an account.
+
+![Step1 Wizard7](/img/integration-patterns/terraform-prisma-cloud/step1-prisma-connect-wizard70.png)
+
+Select Actions to modify an existing integration.
+a. **Reselect Workspaces**: You can add or remove existing workspaces from your integrated HCP Terraform account.
+b. **Delete** integration: This removes an integration from the HCP Terraform account in the Prisma Cloud console.
+![Step1 Wizard8](/img/integration-patterns/terraform-prisma-cloud/step1-prisma-connect-wizard80.png)
+
+
+Once the Run Task is configured via Prisma Cloud, you (the Platform team) can verify this in the HCP Terraform console under **Workspace Settings > Run Tasks**
+![Step1 Wizard9](/img/integration-patterns/terraform-prisma-cloud/step1-prisma-connect-wizard90.png)
+
+From here, you can select an [Enforcement Level](https://developer.hashicorp.com/terraform/cloud-docs/workspaces/settings/run-tasks#associating-run-tasks-with-a-workspace) of either **Advisory** or **Mandatory**. 
+
+- **Advisory**: Run tasks can not block a run from completing. If the task fails, the run will proceed with a warning in the UI.
+- **Mandatory**: Run tasks can block a run from completing. If the task fails (including a timeout or unexpected remote error condition), the run will transition to an Errored state with a warning in the UI.
+
+**Enforcement Levels** defined in HCP Terraform combined with the Enforcement Rules defined in Prisma Cloud and have a net-effect on workspace runs. In general:
+
+- If the run task is set to Mandatory, any errors or policy failures detected by Prisma Cloud will result in an errored plan. 
+- If the run task is set to Advisory, errors and policy failures are treated as a warning and the run will continue.
+
+<Note>
+    The Security Team should work with the Platform Team to determine the appropriate enforcement level for each workspace. The Default enforcement level should be set to Mandatory for all workspaces.
+</Note>
+
+
+### Step 2: Policy Management
+This section describes how to manage relevant security policies and achieve the desired level of enforcement for your organization. These policies should be configured within Prisma Cloud by the Security team. To appropriately scope controls and tailor to your environment(s), all three teams should collaborate to understand requirements and goals. For example, a development or staging environment may not require the same scrutiny as production; therefore enforcement can be relaxed for those workspaces. 
+
+Prisma Cloud is equipped with thousands of built-in security [policies](https://docs.prismacloud.io/en/enterprise-edition/policy-reference/get-started-code-sec-policies/get-started-code-sec-policies) across a variety of different technologies. A subset of which pertain to Application Security, including vulnerabilities, secrets and misconfigurations found in code. 
+
+View and manage policies in the Prisma Cloud console under the **Policies** tab.
+
+![Step2 Wizard1](/img/integration-patterns/terraform-prisma-cloud/step2-prisma-enforcement-10.png)
+
+From the Policies tab, you can [create new custom policies](https://docs.prismacloud.io/en/enterprise-edition/content-collections/governance/create-a-policy) and toggle or modify existing policies. Search through the available policies to get familiar with how they are defined. Any of the default policies can be modified to update the associated severity and labels. 
+
+Use the **Add Policy** button in the top right to create a custom policy. 
+1. Input a **Policy Name** and select the desired **Policy Subset** (choose ‘Build’ for IaC). Click **Next**.
+
+![Step2 Wizard1](/img/integration-patterns/terraform-prisma-cloud/step2-prisma-enforcement-20.png)
+
+2. Write your custom policy in yaml format using the Code Editor ([examples](https://docs.prismacloud.io/en/enterprise-edition/content-collections/governance/custom-build-policies/custom-build-policy-examples#terraform-examples)) or build a custom policy using the Visual Editor within the wizard. Click **Validate and Next**.
+
+![Step2 Wizard1](/img/integration-patterns/terraform-prisma-cloud/step2-prisma-enforcement-30.png)
+
+![Step2 Wizard1](/img/integration-patterns/terraform-prisma-cloud/step2-prisma-enforcement-40.png)
+
+3. Fill in the **Compliance Standards** by selecting a **Standard**, **Requirement**, and **Section** from the dropdown. Click **Next**.
+
+![Step2 Wizard1](/img/integration-patterns/terraform-prisma-cloud/step2-prisma-enforcement-50.png)
+Optionally, add to the **Remediation** section if needed. Then, select **Done** to create the new policy.
+
+### Step 3: Policy Enforcement
+Prisma Cloud provides the ability to manage how policies are enforced based on severity and category. Categories include ‘Vulnerabilities’, ‘Licenses’, ‘IaC’, and ‘Secrets’. Severities range from ‘Info’, ‘Low’, ‘Medium’, ‘High’, and ‘Critical’. As a reminder, severity can be modified at the policy-level. Enforcement rules have three thresholds (‘Hard-Fail’, ‘Soft-Fail’, and ‘Comment’) that can be applied to achieve a particular security outcome. Configuring enforcement rules is covered in more detail below. 
+
+Navigate to Enforcement rules in two ways:
+- Settings > Code Security Configuration > Code Reviews and PR Comments > Enforcement Rules
+- Application Security > Projects > Top Right Menu Icon [...] > Enforcement
+
+![Step2 Wizard1](/img/integration-patterns/terraform-prisma-cloud/step2-prisma-enforcement-60.png)
+
+From this menu shown above, the Security team can configure the global Enforcement policy for all application security risks found at build-time. You can manage enforcement configuration by modifying the default settings, adding an exception and turning a rule on/off for a given code category. 
+
+The enforcement categories are defined as follows:
+- **Hard-Fail**: A repository scan result fails when Prisma Cloud detects a violation or a vulnerability.
+- **Soft-Fail**: A repository scan result passes and a notification appears on the console when Prisma Cloud detects a violation or a vulnerability.
+
+**Comments Bot**: A repository scan result displays issues with fix suggestions as comments with Pull requests accessible on VCS (Version Control System - Not Applicable to HCP Terraform or Terraform Enterprise).
+
+These Enforcement Rules can be combined with the Enforcement Levels (Advisory, Mandatory) in HCP Terraform to control whether workspace runs Pass or Fail. To understand how these work together, consider the following scenarios that apply to the Prisma Cloud run task integration:
+1. A run task set to Mandatory will fail a run if any violation is found with a threshold assigned of Hard-Fail.
+2. A run task set to Mandatory will pass a run if the only violations found have a threshold of Soft-Fail and lower. 
+3. A run task set to Advisory will never fail a run regardless of Enforcement Rules set in Prisma Cloud.
+
+Leveraging the Advisory and Mandatory enforcement levels within HCP Terraform / Enterprise allows you to take advantage of configuring workspace-specific settings to establish quality gates (Advisory) and deployment gates (Mandatory). By adding the additional visibility and enforcement of Prisma Cloud you can expand the scope to include vulnerabilities, licensing models, secrets scanning and IaC misconfigurations and violations.
+
+You can add an exception configuration for each code category that is applicable for select repositories. The exception configuration runs in addition to the default enforcement configurations. See the example below of an exception applied to a single repository.
+
+
+![Step2 Wizard1](/img/integration-patterns/terraform-prisma-cloud/step2-prisma-enforcement-70.png)
+
+![Step2 Wizard1](/img/integration-patterns/terraform-prisma-cloud/step2-prisma-enforcement-80.png)
+
+
+### Step 4: Remediation
+This section highlights the different ways each team can utilize the scan results from Prisma Cloud to remediate security findings. When a terraform plan is scanned, any policy violations and their corresponding fixes are conveniently surfaced in the terraform workspace. This provides the Platform team and (potentially) the Application team with actionable feedback without leaving the platform. The Application and Security teams may also implement repository scanning via VCS integrations in which case Application teams will receive scan results as part of their usual commit/pull request workflow. Needless to say, the scan results from every commit, PR and plan are sent to Prisma Cloud for the Security team to review and optionally take action themselves. This pattern provides full visibility for all teams and a defense-in-depth approach to pushing code and building infrastructure. Below are examples of the remediation workflows each team can. 
+
+**Run Task Results**
+
+When a workspace run is executed, Prisma Cloud evaluates the terraform plan and returns its scan results in a streamlined format with detailed information that provides context to the user. 
+
+![Step4 Wizard1](/img/integration-patterns/terraform-prisma-cloud/step3-prisma-remediation-10.png)
+
+Pull Request Fixes - [Documentation](https://docs.prismacloud.io/en/enterprise-edition/content-collections/application-security/risk-management/monitor-and-manage-code-build/fix-code-issues)
+
+Application teams can fix security violations in code within their VCS workflow by scanning commits and/or pull requests via VCS integrations. Prisma Cloud will add comments to scanned Pull Requests and provide code snippets to fix the violation where applicable.
+
+![Step4 Wizard2](/img/integration-patterns/terraform-prisma-cloud/step3-prisma-remediation-20.png)
+
+Security teams can initiate code fixes themselves and open up an automated PR fix from the Prisma Cloud platform. Navigate to Application **Security > Projects > Select Fix(es)**
+
+
+![Step4 Wizard3](/img/integration-patterns/terraform-prisma-cloud/step3-prisma-remediation-30.png)
